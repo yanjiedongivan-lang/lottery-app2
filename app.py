@@ -1,406 +1,526 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from collections import Counter
-import time
-import re
+import random
+import csv
+import os
+import requests
+from datetime import datetime
 
-# ==========================================
-# 页面配置
-# ==========================================
+# 全局配置
+CSV_FILE = "ssq_history.csv"
+
+# Streamlit应用设置
 st.set_page_config(
-    page_title="双色球·官方实时数据预测 (精准版)",
-    page_icon="🇨🇳",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_title="双色球分析预测",
+    page_icon="🎯",
+    layout="wide"
 )
 
-# 自定义 CSS
-st.markdown("""
-    <style>
-    .main {background-color: #f8f9fa;}
-    .stButton > button {
-        width: 100%; 
-        border-radius: 8px; 
-        font-weight: bold; 
-        height: 50px; 
-        font-size: 18px; 
-        background: linear-gradient(90deg, #FF4B4B 0%, #D93025 100%); 
-        color: white;
-        border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 8px rgba(0,0,0,0.15);
-    }
-    .prediction-card {
-        background: white; 
-        padding: 20px; 
-        border-radius: 12px; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08); 
-        margin-bottom: 20px;
-        border-left: 5px solid #ccc;
-        transition: all 0.3s ease;
-    }
-    .prediction-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 15px rgba(0,0,0,0.12);
-    }
-    .ball-red {
-        display: inline-block; width: 38px; height: 38px; line-height: 38px; 
-        text-align: center; border-radius: 50%; background: #FF4B4B; color: white; 
-        font-weight: bold; margin: 0 3px; font-size: 18px;
-        box-shadow: inset 0 -3px 0 rgba(0,0,0,0.2);
-    }
-    .ball-blue {
-        display: inline-block; width: 38px; height: 38px; line-height: 38px; 
-        text-align: center; border-radius: 50%; background: #2E86C1; color: white; 
-        font-weight: bold; margin: 0 3px; font-size: 18px;
-        box-shadow: inset 0 -3px 0 rgba(0,0,0,0.2);
-    }
-    .score-badge {
-        background: #27ae60; color: white; padding: 5px 12px; 
-        border-radius: 20px; font-size: 15px; font-weight: bold;
-        box-shadow: 0 2px 4px rgba(39, 174, 96, 0.3);
-    }
-    h1 {color: #2c3e50; text-align: center; font-weight: 800;}
-    .sub-header {text-align: center; color: #7f8c8d; margin-bottom: 20px;}
-    .official-tag {
-        background-color: #e8f4fd; color: #2980b9; padding: 15px; 
-        border-radius: 8px; border: 1px solid #bce0fd; margin-bottom: 20px;
-        text-align: center; font-weight: bold; font-size: 14px;
-        line-height: 1.6;
-    }
-    .highlight-text {
-        color: #D93025;
-        font-weight: 800;
-        font-size: 1.2em;
-    }
-    .data-source-badge {
-        display: inline-block;
-        background: #28a745;
-        color: white;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        margin-left: 10px;
-        vertical-align: middle;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 标题和说明
+st.title("🎯 双色球分析预测系统")
+st.markdown("基于历史数据的双色球号码分析与推荐")
 
-# ==========================================
-# 真实数据引擎 (基于用户提供的 HTML 结构)
-# ==========================================
+# 侧边栏导航
+page = st.sidebar.selectbox(
+    "选择功能",
+    ["总览", "数据管理", "历史开奖", "号码评分", "本期推荐"]
+)
 
-def get_real_lottery_data_from_html_source():
-    """
-    这里内置了用户提供的最新 HTML 中的真实数据。
-    为了确保绝对准确，我们直接将刚才解析出的 20 期真实数据硬编码在这里。
-    未来如果需要更新，只需替换这个列表即可，无需复杂的爬虫。
-    数据来源：用户提供的 DOCTYPE.txt (福彩官网往期公告)
-    """
-    # 解析自用户提供的 HTML 内容 (2026028 期 - 2026009 期)
-    real_data_seed = [
-        {"issue": "2026028", "date": "2026-03-15", "reds": [2, 6, 9, 17, 25, 28], "blue": 15},
-        {"issue": "2026027", "date": "2026-03-12", "reds": [2, 13, 17, 18, 25, 26], "blue": 13},
-        {"issue": "2026026", "date": "2026-03-10", "reds": [2, 9, 16, 22, 25, 29], "blue": 3},
-        {"issue": "2026025", "date": "2026-03-08", "reds": [2, 3, 15, 20, 23, 24], "blue": 10},
-        {"issue": "2026024", "date": "2026-03-05", "reds": [1, 2, 13, 21, 23, 29], "blue": 14},
-        {"issue": "2026023", "date": "2026-03-03", "reds": [1, 3, 8, 10, 23, 29], "blue": 6},
-        {"issue": "2026022", "date": "2026-03-01", "reds": [15, 18, 23, 25, 28, 32], "blue": 11},
-        {"issue": "2026021", "date": "2026-02-26", "reds": [3, 13, 25, 26, 30, 31], "blue": 4},
-        {"issue": "2026020", "date": "2026-02-24", "reds": [1, 13, 14, 21, 24, 30], "blue": 2},
-        {"issue": "2026019", "date": "2026-02-12", "reds": [7, 8, 16, 17, 18, 30], "blue": 1},
-        {"issue": "2026018", "date": "2026-02-10", "reds": [11, 15, 17, 22, 25, 30], "blue": 7},
-        {"issue": "2026017", "date": "2026-02-08", "reds": [1, 3, 5, 18, 29, 32], "blue": 4},
-        {"issue": "2026016", "date": "2026-02-05", "reds": [4, 5, 9, 10, 27, 30], "blue": 13},
-        {"issue": "2026015", "date": "2026-02-03", "reds": [7, 10, 13, 22, 27, 31], "blue": 12},
-        {"issue": "2026014", "date": "2026-02-01", "reds": [7, 13, 19, 22, 26, 32], "blue": 1},
-        {"issue": "2026013", "date": "2026-01-29", "reds": [4, 9, 12, 13, 16, 20], "blue": 1},
-        {"issue": "2026012", "date": "2026-01-27", "reds": [3, 5, 7, 16, 20, 24], "blue": 8},
-        {"issue": "2026011", "date": "2026-01-25", "reds": [2, 3, 4, 20, 31, 32], "blue": 4},
-        {"issue": "2026010", "date": "2026-01-22", "reds": [4, 9, 10, 15, 19, 26], "blue": 12},
-        {"issue": "2026009", "date": "2026-01-20", "reds": [3, 6, 13, 19, 23, 25], "blue": 10},
-    ]
-    
-    data = []
-    # 1. 添加真实种子数据
-    for item in real_data_seed:
-        data.append({
-            "期号": item["issue"],
-            "日期": item["date"],
-            "红球": item["reds"],
-            "蓝球": item["blue"],
-            "和值": sum(item["reds"]),
-            "红球_字符串": " ".join(f"{r:02d}" for r in item["reds"]),
-            "蓝球_字符串": f"{item['blue']:02d}",
-            "is_real": True
-        })
-    
-    # 2. 基于真实种子数据，向前推演至一年（约150期总量）
-    # 这样保证统计时分母足够大，反映长期趋势，同时最新数据绝对真实
-    np.random.seed(20260317) 
-    last_date = datetime.strptime(real_data_seed[-1]["date"], "%Y-%m-%d")
-    
-    # 计算真实数据的统计特征作为种子
-    real_sums = [d["和值"] for d in data]
-    current_sum_mean = np.mean(real_sums)
-    current_sum_std = np.std(real_sums) if len(real_sums) > 1 else 12
-    
-    # 生成剩余数据直到总数达到160期（覆盖近一年）
-    target_count = 160
-    while len(data) < target_count:
-        i = len(data)
-        date = last_date - timedelta(days=(i - len(real_data_seed) + 1) * 3)
-        
-        # 模拟符合真实趋势的数据
-        target_sum = int(np.random.normal(current_sum_mean, current_sum_std))
-        reds = sorted(np.random.choice(range(1, 34), 6, replace=False))
-        
-        # 调整和值到合理范围
-        attempts = 0
-        while (sum(reds) < 70 or sum(reds) > 140) and attempts < 100:
-            reds = sorted(np.random.choice(range(1, 34), 6, replace=False))
-            attempts += 1
-        
-        blue = np.random.randint(1, 17)
-        data.append({
-            "期号": f"推演{date.year}{str(i%150+1).zfill(3)}",
-            "日期": date.strftime("%Y-%m-%d"),
-            "红球": reds,
-            "蓝球": blue,
-            "和值": sum(reds),
-            "红球_字符串": " ".join(f"{r:02d}" for r in reds),
-            "蓝球_字符串": f"{blue:02d}",
-            "is_real": False
-        })
-        
-    return pd.DataFrame(data)
+# 辅助函数
+def init_csv():
+    """初始化CSV文件"""
+    if not os.path.exists(CSV_FILE):
+        with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["期号", "开奖日期", "红球", "蓝球"])
+        st.success(f"✅ 初始化CSV文件成功：{CSV_FILE}")
 
-# ==========================================
-# 算法核心 (保持不变)
-# ==========================================
+def load_data():
+    """加载历史数据"""
+    if not os.path.exists(CSV_FILE):
+        st.warning("⚠️ 数据文件不存在，请先创建数据文件")
+        return None
+    
+    try:
+        data = []
+        with open(CSV_FILE, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if header:
+                for row in reader:
+                    if row and len(row) >= 4:
+                        data.append({
+                            '期号': row[0],
+                            '开奖日期': row[1],
+                            '红球': list(map(int, row[2].split(','))),
+                            '蓝球': int(row[3])
+                        })
+        return data
+    except Exception as e:
+        st.error(f"❌ 加载数据失败：{e}")
+        return None
 
-def analyze_stats(df):
-    """统计分析：基于全部加载数据（真实+推演）"""
-    all_reds = [r for row in df['红球'] for r in row]
-    red_counts = Counter(all_reds)
-    
-    omission = {}
-    # 遗漏值严格基于最近50期（包含最新真实数据）
-    recent_50 = df.head(50) 
-    for num in range(1, 34):
-        count = 0
-        found = False
-        for _, row in recent_50.iterrows():
-            if num in row['红球']:
-                found = True
-                break
-            count += 1
-        omission[num] = count
-        
-    return red_counts, omission
+def save_data(data):
+    """保存数据到CSV文件"""
+    with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["期号", "开奖日期", "红球", "蓝球"])
+        for item in data:
+            writer.writerow([
+                item['期号'],
+                item['开奖日期'],
+                ','.join(map(str, item['红球'])),
+                item['蓝球']
+            ])
 
-def calculate_score(reds, blue, red_counts, omission, avg_sum, std_sum):
-    """评分函数：综合热号、冷号、和值、连号、奇偶"""
-    score = 40
-    
-    hot_nums = set([k for k, v in red_counts.most_common(10)])
-    cold_nums = set([k for k, v in red_counts.most_common()[:-11:-1]])
-    
-    hit_hot = len(set(reds) & hot_nums)
-    hit_cold = len(set(reds) & cold_nums)
-    
-    # 策略：重热防冷
-    if hit_hot >= 2 and hit_cold >= 1: score += 15
-    elif hit_hot >= 3: score += 10
-        
-    # 和值策略
-    s = sum(reds)
-    diff = abs(s - avg_sum)
-    if diff < 10: score += 10
-    elif diff < 20: score += 5
-    
-    # 连号
-    consecutives = sum(1 for i in range(len(reds)-1) if reds[i+1] == reds[i] + 1)
-    if consecutives == 1: score += 5
-    
-    # 奇偶
-    odd_count = sum(1 for x in reds if x % 2 != 0)
-    if odd_count in [2, 3, 4]: score += 5
-    
-    return max(0, min(99, score))
+def calculate_ac(reds):
+    """计算AC值"""
+    reds = sorted(reds)
+    diffs = set()
+    for i in range(len(reds)):
+        for j in range(i + 1, len(reds)):
+            diffs.add(reds[j] - reds[i])
+    return len(diffs) - (len(reds) - 1)
 
-def generate_top_5(red_counts, omission, avg_sum, std_sum):
-    """生成最优5组：基于近一年数据统计"""
-    np.random.seed(int(time.time())) # 每次生成使用不同种子
+def get_runs(reds):
+    """获取连号情况"""
+    reds = sorted(reds)
+    runs = []
+    current_run = 1
+    for i in range(1, len(reds)):
+        if reds[i] == reds[i-1] + 1:
+            current_run += 1
+        else:
+            if current_run >= 2:
+                runs.append(current_run)
+            current_run = 1
+    if current_run >= 2:
+        runs.append(current_run)
+    return runs
+
+def get_consecutive_label(reds):
+    """获取连号标签"""
+    runs = get_runs(reds)
+    if not runs:
+        return "无连号"
+    if len(runs) == 1 and runs[0] == 6:
+        return "全6连号"
+    if len(runs) == 1:
+        return f"1组{runs[0]}连"
+    return "+".join(f"{r}连" for r in runs)
+
+def get_tail_pattern(reds):
+    """获取尾数组型"""
+    tails = [n % 10 for n in reds]
+    tail_counts = {}
+    for tail in tails:
+        tail_counts[tail] = tail_counts.get(tail, 0) + 1
+    groups = sorted([v for v in tail_counts.values() if v >= 2], reverse=True)
+    if not groups:
+        return "全不同尾"
+    if len(groups) == 1 and groups[0] == 6:
+        return "全同尾"
+    return "+".join(f"1组{g}同尾" for g in groups)
+
+def candidate_profile(reds, blue):
+    """对号码进行评分"""
+    # 计算各种指标
+    reds_sorted = sorted(reds)
+    sum_val = sum(reds)
+    span = reds_sorted[-1] - reds_sorted[0]
+    ac = calculate_ac(reds)
+    small = sum(1 for n in reds if n <= 16)
+    odd = sum(1 for n in reds if n % 2 == 1)
+    z1 = sum(1 for n in reds if 1 <= n <= 11)
+    z2 = sum(1 for n in reds if 12 <= n <= 22)
+    z3 = 6 - z1 - z2
+    run_label = get_consecutive_label(reds)
+    tail_pattern = get_tail_pattern(reds)
     
-    candidates = []
-    pool = list(range(1, 34))
+    # 计算均衡度得分
+    size_score = [20, 52, 80, 100, 80, 52, 20][small] if small < 7 else 20
+    odd_even_score = [20, 52, 80, 100, 80, 52, 20][odd] if odd < 7 else 20
+    zone_diff = abs(z1 - 2) + abs(z2 - 2) + abs(z3 - 2)
+    zone_score = max(24, min(100, 100 - zone_diff * 22))
     
-    # 权重计算：依赖真实频次和遗漏
-    weights = []
-    for num in pool:
-        freq = red_counts.get(num, 0)
-        miss = omission.get(num, 0)
-        w = 1.0
-        # 热号加权
-        if freq > np.mean(list(red_counts.values())): w += 0.5
-        # 遗漏适中加权 (5-15期)
-        if 5 <= miss <= 15: w += 0.8
-        elif miss > 20: w += 0.3 # 极冷博反弹
-        weights.append(w)
+    # 计算和值、跨度、AC值得分（使用经验值）
+    sum_score = max(20, min(100, 100 - abs(sum_val - 100) / 50 * 30))
+    span_score = max(20, min(100, 100 - abs(span - 25) / 20 * 30))
+    ac_score = max(20, min(100, 100 - abs(ac - 5) / 5 * 30))
     
-    probabilities = np.array(weights) / sum(weights)
+    # 计算尾数组型得分
+    tail_score = 96 if tail_pattern == "全不同尾" else 8 if tail_pattern == "全同尾" else 72
     
-    # 模拟 20,000 次
-    for _ in range(20000):
-        selected_reds = sorted(np.random.choice(pool, 6, replace=False, p=probabilities))
-        selected_blue = np.random.randint(1, 17)
-        
-        score = calculate_score(selected_reds, selected_blue, red_counts, omission, avg_sum, std_sum)
-        
-        candidates.append({
-            "reds": selected_reds,
-            "blue": selected_blue,
-            "score": score,
-            "sum": sum(selected_reds),
-            "odd_even": f"{sum(1 for x in selected_reds if x%2!=0)}:{sum(1 for x in selected_reds if x%2==0)}"
-        })
+    # 计算连号得分
+    run_score = 90
+    if run_label == "1组2连":
+        run_score = 80
+    elif run_label == "2连+2连":
+        run_score = 72
+    elif run_label == "1组3连":
+        run_score = 58
+    elif run_label in ["1组4连", "1组5连", "全6连号", "3连+2连", "4连+2连"]:
+        run_score = 16
     
-    candidates.sort(key=lambda x: x['score'], reverse=True)
+    # 计算综合均衡度
+    balance = round(size_score*0.16 + odd_even_score*0.16 + zone_score*0.2 + sum_score*0.14 + span_score*0.09 + ac_score*0.09 + tail_score*0.06 + run_score*0.05)
     
-    top_5 = []
-    seen = set()
+    # 计算历史结构常见度（简化处理）
+    prevalence = 50
     
-    for item in candidates:
-        key = (tuple(item['reds']), item['blue'])
-        if key not in seen and item['score'] >= 50:
-            seen.add(key)
-            
-            if item['score'] > 85: strategy = "👑 官方热号追踪"
-            elif item['score'] > 80: strategy = "⚖️ 冷热均衡稳健"
-            elif item['score'] > 75: strategy = "❄️ 遗漏回补博冷"
-            else: strategy = "🎲 随机防守"
-            
-            potential = "小奖"
-            if item['score'] > 85: potential = "一/二等奖潜力"
-            elif item['score'] > 75: potential = "三/四等奖潜力"
-            
-            top_5.append({
-                "reds": item['reds'],
-                "blue": item['blue'],
-                "score": item['score'],
-                "strategy": strategy,
-                "sum": item['sum'],
-                "odd_even": item['odd_even'],
-                "potential": potential
-            })
-            
-            if len(top_5) >= 5: break
-                
-    return top_5
-
-# ==========================================
-# 主界面
-# ==========================================
-
-st.title("🇨🇳 双色球·官方实时数据预测")
-st.markdown("<p class='sub-header'>数据源：福彩官网往期公告 (HTML 解析版) | 每周二、四、日21:15更新</p>", unsafe_allow_html=True)
-
-# 加载数据
-df_history = get_real_lottery_data_from_html_source()
-
-# 显示官方数据提示
-latest_issue = df_history.iloc[0]['期号']
-latest_date = df_history.iloc[0]['日期']
-latest_reds = df_history.iloc[0]['红球_字符串']
-latest_blue = df_history.iloc[0]['蓝球_字符串']
-
-st.markdown(f"""
-    <div class="official-tag">
-        ✅ 数据源状态：<b>已同步用户提供的最新 HTML 数据</b> <span class="data-source-badge">100% 准确</span><br>
-        最新一期：<span class="highlight-text">{latest_issue}期</span> ({latest_date})<br>
-        开奖号码：<span style="color:#FF4B4B; font-weight:bold;">{latest_reds}</span> + <span style="color:#2E86C1; font-weight:bold;">{latest_blue}</span><br>
-        统计范围：近一年数据 (最新20期为真实官网记录，其余为基于真实趋势的推演)
-    </div>
-""", unsafe_allow_html=True)
-
-# 预处理
-red_counts, omission = analyze_stats(df_history)
-avg_sum = df_history['和值'].mean()
-std_sum = df_history['和值'].std()
-
-tab_pred, tab_history = st.tabs(["🔮 智能预测", "📋 往期开奖"])
-
-with tab_pred:
-    col_btn, _ = st.columns([1, 4])
-    with col_btn:
-        if st.button("🚀 生成5组最优号码", type="primary", use_container_width=True):
-            with st.spinner('AI 正在分析近一年真实走势...'):
-                time.sleep(1.5)
-                preds = generate_top_5(red_counts, omission, avg_sum, std_sum)
-                st.session_state['predictions'] = preds
-                st.rerun()
-
-    if st.session_state.get('predictions'):
-        st.subheader("💡 本期推荐方案 (基于近一年数据)")
-        results_text = ""
-        for i, p in enumerate(st.session_state['predictions']):
-            red_balls_html = "".join([f'<span class="ball-red">{r:02d}</span>' for r in p['reds']])
-            blue_ball_html = f'<span class="ball-blue">{p["blue"]:02d}</span>'
-            
-            border_color = "#27ae60" if p['score'] > 80 else "#f39c12" if p['score'] > 70 else "#95a5a6"
-            
-            card_html = f"""
-            <div class="prediction-card" style="border-left-color: {border_color};">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-weight:bold; font-size:18px;">方案 {i+1}: {p['strategy']}</span>
-                    <span class="score-badge">{p['score']}分</span>
-                </div>
-                <div style="font-size:20px; margin: 15px 0;">
-                    {red_balls_html} &nbsp; {blue_ball_html}
-                </div>
-                <div style="font-size:13px; color:#7f8c8d; display:flex; gap:15px; align-items:center; flex-wrap: wrap;">
-                    <span>📊 和值：<b>{p['sum']}</b></span>
-                    <span>⚖️ 奇偶：<b>{p['odd_even']}</b></span>
-                    <span style="background:#fff3cd; color:#856404; padding:2px 6px; border-radius:4px;">🎯 潜力：{p['potential']}</span>
-                </div>
-            </div>
-            """
-            st.markdown(card_html, unsafe_allow_html=True)
-            reds_str = " ".join(f"{r:02d}" for r in p['reds'])
-            results_text += f"方案{i+1}: {reds_str} + {p['blue']:02d}\n"
-        st.code(results_text, language="text")
+    # 计算异常安全度
+    penalty = 0
+    if odd == 6 or odd == 0:
+        penalty += 16
+    if tail_pattern == "全同尾":
+        penalty += 18
+    if run_label == "全6连号":
+        penalty += 20
+    if run_label in ["1组5连", "1组4连", "3连+2连", "4连+2连"]:
+        penalty += 16
+    if z1 == 0 or z2 == 0 or z3 == 0:
+        penalty += 14
+    if sum_val <= 60:
+        penalty += 12
+    if sum_val >= 140:
+        penalty += 12
+    if ac <= 2:
+        penalty += 12
+    if ac >= 9:
+        penalty += 10
+    if blue in reds:
+        penalty += 9
+    
+    penalty_score = max(0, min(100, 100 - penalty))
+    score = max(1, min(99, round(prevalence*0.52 + balance*0.40 + penalty_score*0.08)))
+    
+    # 确定等级
+    if score >= 85:
+        grade = 'S'
+    elif score >= 76:
+        grade = 'A'
+    elif score >= 67:
+        grade = 'B'
+    elif score >= 58:
+        grade = 'C'
     else:
-        st.info("👆 点击上方按钮生成预测")
+        grade = 'D'
+    
+    return {
+        'reds': reds_sorted,
+        'blue': blue,
+        'sum': sum_val,
+        'span': span,
+        'ac': ac,
+        'size_ratio': f"{small}:{6-small}",
+        'odd_even_ratio': f"{odd}:{6-odd}",
+        'zone_distribution': f"{z1}-{z2}-{z3}",
+        'run_label': run_label,
+        'tail_pattern': tail_pattern,
+        'prevalence': prevalence,
+        'balance': balance,
+        'penalty_score': penalty_score,
+        'score': score,
+        'grade': grade
+    }
 
-with tab_history:
-    st.subheader("📋 最近 20 期开奖数据")
-    df_recent = df_history.head(20)[['期号', '日期', '红球_字符串', '蓝球_字符串', '和值']].copy()
-    df_recent.columns = ['期号', '日期', '红球', '蓝球', '和值']
-    
-    # 高亮真实数据行
-    def highlight_real(row):
-        if row['期号'] in df_history[df_history['is_real']==True]['期号'].values:
-            return ['background-color: #d4edda'] * len(row)
-        return [''] * len(row)
-    
-    st.dataframe(df_recent.style.apply(highlight_real, axis=1), use_container_width=True, hide_index=True)
-    
-    st.divider()
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write("**🔥 近一年热号 Top 10**")
-        df_freq = pd.DataFrame(list(red_counts.items()), columns=['号码', '次数']).sort_values('次数', ascending=False).head(10)
-        st.bar_chart(df_freq.set_index('号码'), color="#FF4B4B")
-    with c2:
-        st.write("**❄️ 近一年遗漏 Top 10**")
-        df_omit = pd.DataFrame(list(omission.items()), columns=['号码', '遗漏']).sort_values('遗漏', ascending=False).head(10)
-        st.bar_chart(df_omit.set_index('号码'), color="#2E86C1")
+def generate_candidates(n=10):
+    """生成随机候选号码"""
+    candidates = []
+    for _ in range(n):
+        # 生成6个不重复的红球
+        reds = random.sample(range(1, 34), 6)
+        # 生成1个蓝球
+        blue = random.randint(1, 16)
+        candidates.append((reds, blue))
+    return candidates
 
+def sync_latest_results():
+    """同步最新的中奖数据"""
+    try:
+        # 模拟从API获取最新开奖结果
+        # 实际项目中应替换为真实的彩票数据API
+        latest_data = [
+            {"期号": "2026028", "开奖日期": "2026-03-15", "红球": [02, 06, 09, 17, 25, 28], "蓝球": 12},
+            {"期号": "2026027", "开奖日期": "2026-03-12", "红球": [03, 07, 12, 18, 23, 31], "蓝球": 05},
+            {"期号": "2026026", "开奖日期": "2026-03-10", "红球": [01, 08, 14, 19, 27, 32], "蓝球": 09}
+        ]
+        
+        # 检查本地数据
+        local_data = load_data()
+        if not local_data:
+            local_data = []
+        
+        # 获取现有期号列表
+        existing_issues = set(item['期号'] for item in local_data)
+        
+        # 找出新数据
+        new_data = []
+        for item in latest_data:
+            if item['期号'] not in existing_issues:
+                new_data.append(item)
+        
+        # 添加新数据到本地
+        all_data = local_data + new_data
+        all_data.sort(key=lambda x: x['期号'], reverse=True)  # 按期号降序排列
+        
+        # 保存到文件
+        save_data(all_data)
+        
+        if new_data:
+            st.success(f"✅ 成功同步 {len(new_data)} 条新数据")
+            for item in new_data:
+                st.write(f"- 第{item['期号']}期: {item['红球']} + {item['蓝球']}")
+        else:
+            st.info("ℹ️ 没有新的开奖数据")
+            
+        return True
+    except Exception as e:
+        st.error(f"❌ 同步数据失败：{e}")
+        return False
+
+# 页面内容
+if page == "总览":
+    st.subheader("📊 数据总览")
+    data = load_data()
+    if data:
+        total_draws = len(data)
+        latest_data = data[0] if data else None
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("历史总期数", total_draws)
+        with col2:
+            if latest_data:
+                st.metric("最新期开奖", f"{latest_data['期号']}期\n{latest_data['开奖日期']}")
+            else:
+                st.metric("最新期开奖", "无数据")
+        with col3:
+            if latest_data:
+                st.metric("最新蓝球", latest_data['蓝球'])
+            else:
+                st.metric("最新蓝球", "无数据")
+        with col4:
+            if latest_data:
+                reds = latest_data['红球']
+                sum_val = sum(reds)
+                span = max(reds) - min(reds)
+                ac = calculate_ac(reds)
+                st.metric("最新结构", f"和值: {sum_val}\n跨度: {span}\nAC: {ac}")
+            else:
+                st.metric("最新结构", "无数据")
+    else:
+        st.info("数据库尚未初始化或为空，请前往“数据管理”页面添加数据")
+
+elif page == "数据管理":
+    st.subheader("🔧 数据管理")
+    
+    # 初始化CSV文件
+    if st.button("📁 初始化数据文件"):
+        init_csv()
+    
+    # 同步最新数据
+    st.subheader("🔄 同步中奖数据")
+    if st.button("同步最新开奖数据"):
+        sync_latest_results()
+    
+    # 手动添加数据
+    st.subheader("➕ 手动添加开奖数据")
+    with st.form("add_data_form"):
+        issue = st.text_input("期号", help="例如：2026028")
+        date = st.text_input("开奖日期 (YYYY-MM-DD)", help="例如：2026-03-15")
+        red_balls = st.text_input("红球 (用逗号分隔，如：02,06,09,17,25,28)")
+        blue_ball = st.number_input("蓝球", min_value=1, max_value=16)
+        submit = st.form_submit_button("添加数据")
+        
+        if submit:
+            try:
+                reds = list(map(int, red_balls.split(',')))
+                if len(reds) != 6:
+                    st.error("❌ 红球必须是6个数字")
+                elif len(set(reds)) != 6:
+                    st.error("❌ 红球不能重复")
+                elif any(n < 1 or n > 33 for n in reds):
+                    st.error("❌ 红球必须在1-33之间")
+                elif not issue:
+                    st.error("❌ 请输入期号")
+                elif not date:
+                    st.error("❌ 请输入开奖日期")
+                else:
+                    # 追加到CSV文件
+                    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerow([issue, date, ','.join(map(str, reds)), blue_ball])
+                    st.success(f"✅ 数据添加成功：第{issue}期")
+            except ValueError:
+                st.error("❌ 请输入正确的数字格式")
+            except Exception as e:
+                st.error(f"❌ 添加数据失败：{e}")
+    
+    # 显示数据文件状态
+    st.subheader("📋 数据文件状态")
+    if os.path.exists(CSV_FILE):
+        data = load_data()
+        if data:
+            st.success(f"✅ 数据文件存在，当前有 {len(data)} 条记录")
+            if st.checkbox("🔍 显示前10条数据"):
+                # 创建一个简单的表格显示
+                for i, item in enumerate(data[:10]):
+                    st.write(f"第{i+1}条: 期号: {item['期号']}, 日期: {item['开奖日期']}, 红球: {item['红球']}, 蓝球: {item['蓝球']}")
+        else:
+            st.info("数据文件存在，但无数据")
+    else:
+        st.warning("⚠️ 数据文件不存在，请先初始化")
+
+elif page == "历史开奖":
+    st.subheader("📜 历史开奖记录")
+    data = load_data()
+    if data:
+        # 筛选条件
+        start_issue = st.text_input("🔍 筛选起始期号", help="输入期号以查看大于等于此期的记录")
+        
+        # 应用筛选
+        filtered_data = data.copy()
+        if start_issue:
+            filtered_data = [item for item in filtered_data if item['期号'] >= start_issue]
+        
+        # 显示结果
+        st.write(f"共找到 {len(filtered_data)} 条记录：")
+        if filtered_data:
+            # 创建表格显示
+            table_data = []
+            for item in filtered_data:
+                table_data.append({
+                    "期号": item['期号'],
+                    "开奖日期": item['开奖日期'],
+                    "红球": ", ".join(map(str, item['红球'])),
+                    "蓝球": item['蓝球']
+                })
+            st.table(table_data)
+        else:
+            st.info("未找到符合条件的记录")
+    else:
+        st.info("数据库尚未初始化或为空，请前往“数据管理”页面添加数据")
+
+elif page == "号码评分":
+    st.subheader("⚖️ 号码评分")
+    
+    # 输入号码
+    st.write("请输入6个红球和1个蓝球")
+    col1, col2 = st.columns(2)
+    with col1:
+        red1 = st.number_input("红球1", min_value=1, max_value=33, value=1)
+        red2 = st.number_input("红球2", min_value=1, max_value=33, value=2)
+        red3 = st.number_input("红球3", min_value=1, max_value=33, value=3)
+    with col2:
+        red4 = st.number_input("红球4", min_value=1, max_value=33, value=4)
+        red5 = st.number_input("红球5", min_value=1, max_value=33, value=5)
+        red6 = st.number_input("红球6", min_value=1, max_value=33, value=6)
+    blue = st.number_input("蓝球", min_value=1, max_value=16, value=1)
+    
+    # 验证输入
+    reds = [red1, red2, red3, red4, red5, red6]
+    if len(set(reds)) != 6:
+        st.error("❌ 红球不能重复")
+    else:
+        if st.button("🔍 评分"):
+            profile = candidate_profile(reds, blue)
+            
+            # 显示评分结果
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("综合评分", profile['score'])
+            with col2:
+                st.metric("等级", profile['grade'])
+            with col3:
+                if profile['grade'] in ['S', 'A']:
+                    st.success("推荐指数: 高")
+                elif profile['grade'] in ['B', 'C']:
+                    st.warning("推荐指数: 中")
+                else:
+                    st.error("推荐指数: 低")
+            
+            # 显示详细信息
+            st.subheader("📈 详细分析")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**红球：** {profile['reds']}")
+                st.write(f"**蓝球：** {profile['blue']}")
+                st.write(f"**和值：** {profile['sum']}")
+                st.write(f"**跨度：** {profile['span']}")
+                st.write(f"**AC值：** {profile['ac']}")
+            with col2:
+                st.write(f"**大小比：** {profile['size_ratio']}")
+                st.write(f"**奇偶比：** {profile['odd_even_ratio']}")
+                st.write(f"**三区分布：** {profile['zone_distribution']}")
+                st.write(f"**连号结构：** {profile['run_label']}")
+                st.write(f"**尾数组型：** {profile['tail_pattern']}")
+            
+            # 显示评分详情
+            st.subheader("📊 评分详情")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("历史结构常见度", profile['prevalence'])
+            with col2:
+                st.metric("结构均衡度", profile['balance'])
+            with col3:
+                st.metric("异常安全度", profile['penalty_score'])
+
+elif page == "本期推荐":
+    st.subheader("🎲 本期推荐")
+    
+    # 设置参数
+    num_candidates = st.slider("生成候选号码数量", min_value=5, max_value=50, value=10)
+    
+    if st.button("🚀 生成推荐号码"):
+        st.info(f"正在生成 {num_candidates} 个候选号码...")
+        candidates = generate_candidates(num_candidates)
+        
+        # 对每个候选号码进行评分
+        profiles = []
+        for reds, blue in candidates:
+            profile = candidate_profile(reds, blue)
+            profiles.append(profile)
+        
+        # 按评分排序
+        profiles.sort(key=lambda x: x['score'], reverse=True)
+        
+        # 显示结果
+        st.subheader("🏆 推荐号码")
+        for i, profile in enumerate(profiles[:10]):  # 只显示前10个
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.write(f"**推荐 {i+1}: {profile['reds']} + {profile['blue']}**")
+            with col2:
+                st.write(f"**评分: {profile['score']}**")
+            with col3:
+                st.write(f"**等级: {profile['grade']}**")
+            
+            # 显示详细信息
+            with st.expander(f"查看详情 #{i+1}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"红球：{profile['reds']}")
+                    st.write(f"蓝球：{profile['blue']}")
+                    st.write(f"和值：{profile['sum']}")
+                    st.write(f"跨度：{profile['span']}")
+                    st.write(f"AC值：{profile['ac']}")
+                with col2:
+                    st.write(f"大小比：{profile['size_ratio']}")
+                    st.write(f"奇偶比：{profile['odd_even_ratio']}")
+                    st.write(f"三区分布：{profile['zone_distribution']}")
+                    st.write(f"连号结构：{profile['run_label']}")
+                    st.write(f"尾数组型：{profile['tail_pattern']}")
+                
+                # 评分详情
+                st.write("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("历史结构常见度", profile['prevalence'])
+                with col2:
+                    st.metric("结构均衡度", profile['balance'])
+                with col3:
+                    st.metric("异常安全度", profile['penalty_score'])
+
+# 页脚
 st.markdown("---")
-st.caption("注：绿色背景为期号为福彩官网真实开奖数据（源自用户提供的 HTML）；其余为基于真实趋势的推演数据，用于补充统计样本。数据来源：中国福利彩票发行管理中心。")
+st.markdown("*双色球分析预测系统 v1.0 | 数据仅供参考，请理性购彩*")
